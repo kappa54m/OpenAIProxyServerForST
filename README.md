@@ -6,7 +6,7 @@ When you "Continue" in SillyTavern in Chat Completion mode, it sends the payload
 
 Additionally, there currently exists a bug in llama.cpp:
 - [llama-server returns template-injected <think> tokens as model output in assistant prefill responses (Qwen 3.5) #21511](https://github.com/ggml-org/llama.cpp/issues/21511)
-wherein *think* blocks will be printed first with assistant prefix. You can cull these think blocks by setting `assistant_prefill_cull_thinkblock_patterns` in the [configuration](./conf/run_proxy.yaml) appropriately.
+wherein *think* blocks will be printed first with assistant prefix. You can cull these think blocks by setting `assistant_prefill_cull_thinkblock_patterns` in the [configuration](./conf/run_proxy.yaml) appropriately. (Note: this only works for streaming responses, and only if the entire think block is contained within a single streamed chunk.)
 
 ## **The Solution**
 This proxy intercepts outgoing chat completion requests and:
@@ -21,8 +21,6 @@ This proxy intercepts outgoing chat completion requests and:
   Optionally enable [authentication](https://www.gradio.app/guides/sharing-your-app#authentication) by setting environment variable `ADMIN_UI_ENABLE_AUTH=1`,
   then also setting `ADMIN_UI_USERNAME` and `ADMIN_UI_PASSWORD` to a nonempty value. You can use a `.env` file for this.
 
-Note that this API only intercepts HTTP traffic starting with "/v1", so in SillyTavern you must set `Custom Endpoint (Base URL)` (while `Chat Completion Source` is set to `Custom (OpenAI-compatible)`) to something like "http://127.0.0.1:12434/v1", as opposed to "http://127.0.0.1:12434".
-
 # **Usage**
 1. **Start the Proxy:**
 ```bash
@@ -34,9 +32,9 @@ Configuration: [./conf/run_proxy.yaml](./conf/run_proxy.yaml).
 For debugging, append to command: `log.console_log_level=DEBUG`
 
 2. **Configure via Web UI:**
-  A Gradio interface to configure various options in real time is also started simultaneously. Its address should be the proxy API address + "/ui".
+  A Gradio interface to configure various options in real time is also started simultaneously.
 
-3. In SillyTavern, set API type to `Chat Completion`, and set `Custom Endpoint` to `"http://{host}:{port}/v1"` (or the endpoint of this proxy server that will be printed on screen upon server start).
+3. In SillyTavern, set API type to `Chat Completion`, and set `Custom Endpoint` to `"http://{proxy_host}:{proxy_port}"` or `"http://{proxy_host}:{proxy_port}/v1"` (or the endpoint of this proxy server that will be printed on screen upon server start).
 Within a chat session, when you want to modify the last response of the assistant (or your character), trim its response at the desired point, then click `Continue`.
 
 Note: `AI Response Configuration > Continue Postfix` should be set to `None` to avoid formatting issues.

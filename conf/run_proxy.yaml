@@ -3,8 +3,12 @@ defaults:
   - _self_
 
 # Where to run the proxy
-host: 127.0.0.1
-port: 12434
+proxy_host: 127.0.0.1
+proxy_port: 12434
+
+# Where to run the admin UI
+admin_ui_host: 127.0.0.1
+admin_ui_port: 12888
 
 # OpenAI-compatible backend whose traffic should be forwarded.
 # Only HTTP traffic whose path start with "/v1" will be forwarded

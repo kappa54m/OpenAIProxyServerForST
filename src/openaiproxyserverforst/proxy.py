@@ -77,34 +77,18 @@ with gr.Blocks() as admin_ui:
         outputs=[url_input, prefix_toggle]
     )
 
-# Mount the Gradio UI onto the FastAPI app at the /ui endpoint
-kws: dict[str, Any] = {
-    'theme': gr_themes.Soft(),
-}
-gradio_app_hasauth = bool(os.getenv('ADMIN_UI_ENABLE_AUTH'))
-if gradio_app_hasauth:
-    print("Auth enabled for admin UI")
-    gradio_app_username = os.getenv('ADMIN_UI_USERNAME')
-    gradio_app_pw = os.getenv('ADMIN_UI_PASSWORD')
-    if not gradio_app_username or not gradio_app_pw:
-        print(("ADMIN_UI_ENABLE_AUTH set, but one (or both) of"
-              "ADMIN_UI_USERNAME and ADMIN_UI_PASSWORD are not provided. Aborting."), file=sys.stderr)
-        exit(1)
-    kws['auth'] = (gradio_app_username, gradio_app_pw)
-web = gr.mount_gradio_app(web, admin_ui, path="/ui", **kws)
-
 
 # --- FASTAPI CATCH-ALL PROXY ---
-@web.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+@web.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_traffic(request: Request, path: str):
     target_url = global_config["target_url"]
-    destination_url = f"{target_url}/v1/{path}"
+    destination_url = f"{target_url}/{path}"
 
     # Extract headers and remove 'host' so the target server doesn't get confused
     headers = dict(request.headers)
     headers.pop("host", None)
 
-    is_chat_completion =  path.startswith("chat/completions")
+    is_chat_completion = path.startswith("v1/chat/completions") or path.startswith("chat/completions")
     
     # Read the raw incoming body
     body = await request.body()
@@ -116,8 +100,6 @@ async def proxy_traffic(request: Request, path: str):
     if request.method == "POST" and "application/json" in headers.get("content-type", ""):
         try:
             payload = json.loads(body)
-            logger.debug("Original chat payload: %s", payload)
-            
             # If it's a chat completions request, check for messages
             if is_chat_completion:
                 if "messages" in payload and isinstance(payload["messages"], list) and len(payload["messages"]) > 0:
@@ -128,6 +110,7 @@ async def proxy_traffic(request: Request, path: str):
                         last_msg["prefix"] = True
                         is_intercepted = True
                         logger.info("--> [Intercepted] Injected prefix: true into assistant message")
+                        logger.debug("Intercepted payload (parsed): %s", payload)
                 
             # Check if SillyTavern requested a stream
             is_stream = payload.get("stream", False)
@@ -241,22 +224,51 @@ def main(cfg: DictConfig):
     global logger
     logger = lf.get_logger(__name__)
 
-    host = cfg['host']
-    port = cfg['port']
+    proxy_host = cfg['proxy_host']
+    proxy_port = int(cfg['proxy_port'])
     target_url = cfg['openai_api_base']
+    admin_ui_host = cfg['admin_ui_host']
+    admin_ui_port = int(cfg['admin_ui_port'])
+    if proxy_port == admin_ui_port:
+        print("Proxy port (%d) and admin UI port must not match. Aborting.", file=sys.stderr)
+        exit(1)
     assistant_prefill_cull_thinkblock_patterns = cfg['assistant_prefill_cull_thinkblock_patterns']
     global_config['target_url'] = target_url
     global_config['assistant_prefill_cull_thinkblock_patterns'] = assistant_prefill_cull_thinkblock_patterns or []
 
     update_settings(new_url=global_config['target_url'], use_prefix=global_config['use_prefix'])
 
-    print("Starting Proxy Server...")
-    print(f"Proxy Address: http://{host}:{port}")
-    print(f"Admin UI:      http://{host}:{port}/ui")
-
     logger.info("Global configuration: %s", global_config)
 
-    uvicorn.run(web, host=host, port=port)
+    # Launch Admin UI (Gradio)
+    # Mount the Gradio UI onto the FastAPI app at the /ui endpoint
+    gradio_launch_kws: dict[str, Any] = {
+        'theme': gr_themes.Soft(),
+    }
+    gradio_app_hasauth = bool(os.getenv('ADMIN_UI_ENABLE_AUTH'))
+    if gradio_app_hasauth:
+        logger.info("Auth enabled for admin UI")
+        gradio_app_username = os.getenv('ADMIN_UI_USERNAME')
+        gradio_app_pw = os.getenv('ADMIN_UI_PASSWORD')
+        if not gradio_app_username or not gradio_app_pw:
+            logger.error(("ADMIN_UI_ENABLE_AUTH set, but one (or both) of"
+                  "ADMIN_UI_USERNAME and ADMIN_UI_PASSWORD are not provided. Aborting."))
+            exit(1)
+        gradio_launch_kws['auth'] = (gradio_app_username, gradio_app_pw)
+
+    logger.info("Launching Admin UI (Gradio)...")
+    admin_ui.launch(server_name=admin_ui_host,
+                    server_port=admin_ui_port,
+                    root_path='/ui',
+                    prevent_thread_lock=True,
+                    quiet=False, **gradio_launch_kws)
+
+    print("Starting Proxy Server...")
+    print(f"Proxy Address: http://{proxy_host}:{proxy_port}")
+    print(f"Admin UI:      http://{admin_ui_host}:{admin_ui_port}/ui")
+
+    # Launch FastAPI server
+    uvicorn.run(web, host=proxy_host, port=proxy_port)
 
 
 if __name__ == "__main__":
