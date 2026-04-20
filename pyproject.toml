@@ -1,0 +1,25 @@
+[project]
+name = "openaiproxyserverforst"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "_", email = "_@_._" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.135.1",
+    "gradio>=6.9.0",
+    "httpx>=0.28.1",
+    "hydra-core>=1.3.2",
+    "python-dotenv>=1.2.2",
+    "pytz>=2026.1.post1",
+    "uvicorn>=0.42.0",
+]
+
+[project.scripts]
+#proxy_server = "openaiproxyserverforst.proxy:main"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"

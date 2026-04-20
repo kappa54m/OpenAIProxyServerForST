@@ -1,0 +1,11 @@
+defaults:
+  - log/console_log
+  - _self_
+
+# Where to run the proxy
+host: 127.0.0.1
+port: 12434
+
+# OpenAI-compatible endpoint whose traffic should be forwarded.
+# Only HTTP traffic whose path start with "/v1" will be forwarded
+openai_api_base: http://127.0.0.1:11434

@@ -1,0 +1,6 @@
+{
+  "typeCheckingMode": "basic",
+  "reportMissingTypeArgument": "none",
+  "reportUnusedCallResult": "none",
+  "reportUntypedFunctionDecorator": "none"
+}

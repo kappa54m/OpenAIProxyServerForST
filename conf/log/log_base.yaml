@@ -1,0 +1,4 @@
+console_log_level: INFO
+do_file_log: false
+file_log_level: DEBUG
+file_log_dir: logs/

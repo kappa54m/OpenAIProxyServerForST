@@ -1,0 +1,8 @@
+defaults:
+  - log_base
+
+console_log_level: INFO
+do_file_log: false
+# https://mljar.com/blog/list-pytz-timezones/
+timezone: 'UTC'
+
