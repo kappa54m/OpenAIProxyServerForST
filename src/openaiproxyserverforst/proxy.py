@@ -20,6 +20,8 @@ from .logging import LoggerFactory
 
 logger: Logger = None # pyright: ignore [reportAssignmentType]
 
+os.environ['GRADIO_ANALYTICS_ENABLED'] = "False"
+
 load_dotenv()
 
 # --- STATE MANAGEMENT ---
@@ -27,6 +29,7 @@ load_dotenv()
 global_config = {
     "target_url": None,
     "use_prefix": True,
+    "assistant_prefill_cull_thinkblock_patterns": [],
 }
 
 web = FastAPI()
@@ -100,37 +103,40 @@ async def proxy_traffic(request: Request, path: str):
     # Extract headers and remove 'host' so the target server doesn't get confused
     headers = dict(request.headers)
     headers.pop("host", None)
+
+    is_chat_completion =  path.startswith("chat/completions")
     
     # Read the raw incoming body
     body = await request.body()
+
+    is_intercepted = False
     is_stream = False
     
     # Intercept and modify POST requests containing JSON (like /v1/chat/completions)
     if request.method == "POST" and "application/json" in headers.get("content-type", ""):
-        if path.startswith("chat/completions"):
-            try:
-                payload = json.loads(body)
-                logger.debug("Original chat payload: %s", payload)
-                
-                # If it's a chat completions request, check for messages
+        try:
+            payload = json.loads(body)
+            logger.debug("Original chat payload: %s", payload)
+            
+            # If it's a chat completions request, check for messages
+            if is_chat_completion:
                 if "messages" in payload and isinstance(payload["messages"], list) and len(payload["messages"]) > 0:
                     last_msg = payload["messages"][-1]
                     
                     # If SillyTavern is Continuing AND the user has the toggle enabled
                     if last_msg.get("role") == "assistant" and global_config["use_prefix"]:
                         last_msg["prefix"] = True
+                        is_intercepted = True
                         logger.info("--> [Intercepted] Injected prefix: true into assistant message")
-                    
-                    # Check if SillyTavern requested a stream
-                    is_stream = payload.get("stream", False)
-                    
-                # Repackage the modified JSON
-                logger.debug("New chat payload with \"prefix\"=true: %s", payload)
-                body = json.dumps(payload).encode("utf-8")
-                headers["content-length"] = str(len(body))
                 
-            except json.JSONDecodeError:
-                pass # If it's not valid JSON, ignore it and let it pass through raw
+            # Check if SillyTavern requested a stream
+            is_stream = payload.get("stream", False)
+                
+            # Repackage the modified JSON
+            body = json.dumps(payload).encode("utf-8")
+            headers["content-length"] = str(len(body))
+        except json.JSONDecodeError as e:
+            logger.exception("Failed to parse JSON request: {}".format(body), e)
 
     # Forward the request using httpx
     client = httpx.AsyncClient(timeout=300.0)
@@ -143,13 +149,61 @@ async def proxy_traffic(request: Request, path: str):
         params=request.query_params
     )
 
+    parse_stream_output = False
+    if is_intercepted:
+        if global_config['assistant_prefill_cull_thinkblock_patterns']:
+            parse_stream_output = True
+
     # Handle the response (Streaming vs Standard)
     if is_stream:
         async def stream_generator():
             async with client.stream(req.method, req.url, headers=req.headers, content=req.content) as resp:
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
-                    
+                if not parse_stream_output:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                else:
+                    chunk_idx = 0
+                    last_chunk_had_empty_msg = True
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            json_str = line[len("data: "):]
+                            
+                            # Handle the end-of-stream marker
+                            if json_str.strip() == "[DONE]":
+                                yield b"data: [DONE]\n\n"
+                                continue
+                                
+                            chunk_decode_success = False
+                            try:
+                                data = json.loads(json_str)
+                                chunk_decode_success = True
+                            except json.JSONDecodeError as e:
+                                logger.exception("Failed to parse chat completion chunk", e)
+
+                            if chunk_decode_success:
+                                logger.debug("Decoded chunk: %s", data)
+                                is_first_nonempty_chunk = False
+                                if last_chunk_had_empty_msg:
+                                    if data.get('choices', None):
+                                        first_choice = data['choices'][0]
+                                        delta = first_choice['delta']
+                                        content = delta['content']
+                                        if content is not None:
+                                            last_chunk_had_empty_msg = False
+                                            is_first_nonempty_chunk = True
+
+                                modified_data = modify_chat_completion_chunk(data, is_first_nonempty_chunk=is_first_nonempty_chunk)
+                                modified_json_str = json.dumps(modified_data, separators=(',', ':'))
+                                new_chunk = f"data: {modified_json_str}\n\n"
+                                yield new_chunk.encode("utf-8")
+                            else:
+                                yield f"{line}\n\n".encode("utf-8")
+
+                            chunk_idx += 1
+                        elif line.strip() == "": # Ignore empty lines (we add \n\n manually during yield)
+                            continue 
+                        else: # Pass through non-data lines (like SSE comments or event type lines) unharmed
+                            yield f"{line}\n\n".encode("utf-8")
         return StreamingResponse(stream_generator())
     else:
         # Standard non-streaming response
@@ -157,6 +211,22 @@ async def proxy_traffic(request: Request, path: str):
         # Filter out headers that might mess up the browser/ST parsing
         resp_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'connection']}
         return Response(content=resp.content, status_code=resp.status_code, headers=resp_headers)
+
+
+def modify_chat_completion_chunk(cur_chunk_d: dict, is_first_nonempty_chunk: bool) -> dict:
+    modified_chunk_d = {**cur_chunk_d}
+
+    if is_first_nonempty_chunk:
+        content = cur_chunk_d['choices'][0]['delta']['content']
+        for i, thinkblock_str in enumerate(global_config['assistant_prefill_cull_thinkblock_patterns']):
+            if content.startswith(thinkblock_str):
+                new_content = content[len(thinkblock_str):]
+                cur_chunk_d['choices'][0]['delta']['content'] = new_content
+                logger.debug(("Culled thinkblock string from first nonempty chunk content;"
+                              " modified chunk: %s (thinkblock pattern %d: %s)"), cur_chunk_d, i+1, thinkblock_str)
+                break
+
+    return modified_chunk_d
 
 
 @hydra.main(version_base=None, config_path='../../conf', config_name='run_proxy')
@@ -174,7 +244,9 @@ def main(cfg: DictConfig):
     host = cfg['host']
     port = cfg['port']
     target_url = cfg['openai_api_base']
+    assistant_prefill_cull_thinkblock_patterns = cfg['assistant_prefill_cull_thinkblock_patterns']
     global_config['target_url'] = target_url
+    global_config['assistant_prefill_cull_thinkblock_patterns'] = assistant_prefill_cull_thinkblock_patterns or []
 
     update_settings(new_url=global_config['target_url'], use_prefix=global_config['use_prefix'])
 

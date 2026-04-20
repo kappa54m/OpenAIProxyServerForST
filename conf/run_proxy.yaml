@@ -6,6 +6,16 @@ defaults:
 host: 127.0.0.1
 port: 12434
 
-# OpenAI-compatible endpoint whose traffic should be forwarded.
+# OpenAI-compatible backend whose traffic should be forwarded.
 # Only HTTP traffic whose path start with "/v1" will be forwarded
 openai_api_base: http://127.0.0.1:11434
+
+# If the first message from the backend starts with any of these strings, these will be removed.
+# Normally, these think blocks should not appear with assistant prefill, but as of 20260419,
+# there exists a bug in llama.cpp causing it to happen:
+# [llama-server returns template-injected <think> tokens as model output in assistant prefill responses (Qwen 3.5) #21511](https://github.com/ggml-org/llama.cpp/issues/21511)
+# Note that these are not REGEX.
+assistant_prefill_cull_thinkblock_patterns: []
+#  - "<think>\n\n</think>\n\n"        # Qwen 3.5, 3.6
+#  - "<|channel>thought\n<channel|>"  # Gemma 4
+
