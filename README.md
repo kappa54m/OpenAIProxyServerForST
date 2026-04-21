@@ -39,7 +39,22 @@ Within a chat session, when you want to modify the last response of the assistan
 
 Note: `AI Response Configuration > Continue Postfix` should be set to `None` to avoid formatting issues.
 
-# Caveats
-- If your backend is llama.cpp, setting `"prefix": "true"` is actually not necessary to enable assistant prefill.
-- This project has only been tested with the llama.cpp backend.
-  Thinking must be disabled for continuation.
+## **Development & Testing**
+This project uses `pytest` for unit testing. 
+
+### Running Tests
+To run the entire test suite:
+```bash
+uv run pytest
+```
+
+To run a specific test file:
+```bash
+uv run pytest tests/test_prefix_injection.py -v
+uv run pytest tests/test_stream_culling.py -v
+```
+
+The tests cover:
+- **Prefix Injection**: Verifying that `"prefix": true` is added correctly to chat completion requests.
+- **Stream Culling**: Ensuring think blocks are removed only from the first non-empty chunk of an SSE stream.
+- **Unicode Handling**: Confirming that non-ASCII characters (like Korean) are processed without corruption and that `Content-Length` is calculated correctly in bytes.
