@@ -39,6 +39,55 @@ Within a chat session, when you want to modify the last response of the assistan
 
 Note: `AI Response Configuration > Continue Postfix` should be set to `None` to avoid formatting issues.
 
+## **Systemd Installation (Linux)**
+To run the proxy as a background service that starts automatically on boot:
+
+1.  **Identify Paths:**
+    *   Find the absolute path to your project (e.g., `/home/user/OpenAIProxyServerForST`).
+    *   Find the path to the `uv` executable (`which uv`).
+
+2.  **Create Custom Config (Optional):**
+    If you want to use a specific backend or port for your server, it's recommended to create a local configuration file in `conf_mine/` (this directory is intended for platform-specific configs and should be kept out of source control).
+    Example: `conf_mine/run_proxy_local_llamacpp.yaml`.
+
+3.  **Create Service File:**
+    Create a file named `/etc/systemd/system/openai-proxy-4st.service` (requires `sudo`):
+    ```ini
+    [Unit]
+    Description=OpenAI Proxy Server for SillyTavern
+    After=network.target
+
+    [Service]
+    # Replace with your Linux username
+    User=your_username
+    # Replace with absolute path to the project
+    WorkingDirectory=/path/to/OpenAIProxyServerForST
+    # Replace with absolute path to 'uv' and your desired config
+    # Example using custom config: ./conf_mine/run_proxy_local_llamacpp.yaml
+    ExecStart=/path/to/uv run -m openaiproxyserverforst.proxy --config-dir conf_mine --config-name run_proxy_local_llamacpp
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+    Try running the command in `ExecStart` as a normal user and see if it runs. Also, ensure that an absolute path to uv is provided.
+
+4.  **Enable and Start:**
+    ```bash
+    sudo systemctl daemon-reload
+    sudo systemctl enable openai-proxy-4st
+    sudo systemctl start openai-proxy-4st
+    ```
+
+5.  **Manage Service:**
+    ```bash
+    # Check status
+    sudo systemctl status openai-proxy-4st
+    # View logs
+    journalctl -u openai-proxy-4st -f
+    ```
+
 ## **Development & Testing**
 This project uses `pytest` for unit testing. 
 
